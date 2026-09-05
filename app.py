@@ -17,6 +17,31 @@ PHONE_RE = re.compile(r"0?5\d{2}[\s.-]?\d{3}[\s.-]?\d{2}[\s.-]?\d{2}")
 NAME_KEYWORDS = ["alıcı", "alici", "ad soyad", "isim soyisim", "gönderilen"]
 ID_LINE_RE = re.compile(r"^[\d\s]{9,20}$")  # TC kimlik no gibi sadece rakamlardan olusan satirlar
 
+# Bir satirin "adres" oldugunu dusundurten kelimeler - bunlardan biri gecen
+# satir isim adayi olarak degerlendirilmez.
+ADDRESS_KEYWORD_RE = re.compile(
+    r"\b(mah|mahalle|mahallesi|cad|cadde|sokak|sok|kat|daire|apt|apartman|"
+    r"blok|köy|belde|ilçe|sitesi|bulvar|bulvarı|no)\b",
+    re.IGNORECASE,
+)
+NAME_LINE_RE = re.compile(r"^[A-Za-zÇĞİÖŞÜçğıöşü'’\-\. ]+$")
+
+
+def looks_like_name(line):
+    """Bir satirin isim-soyisim gibi gorunup gorunmedigini kaba kurallarla tahmin eder."""
+    if re.search(r"\d", line):
+        return False
+    words = line.split()
+    if not (1 <= len(words) <= 4):
+        return False
+    if ADDRESS_KEYWORD_RE.search(line):
+        return False
+    if "kart sahibi" in line.lower():
+        return False
+    if not NAME_LINE_RE.match(line):
+        return False
+    return True
+
 
 def guess_fields(raw_text):
     """Ham OCR metninden isim/adres/telefonu KURAL TABANLI tahmin eder.
@@ -29,6 +54,8 @@ def guess_fields(raw_text):
 
     name = ""
     name_line_index = None
+
+    # 1. yol: "alici" gibi bir anahtar kelime var mi?
     for i, line in enumerate(lines):
         low = line.lower()
         matched_kw = next((k for k in NAME_KEYWORDS if k in low), None)
@@ -42,6 +69,18 @@ def guess_fields(raw_text):
                 name = lines[i + 1]
                 name_line_index = i + 1
             break
+
+    # 2. yol (yedek): anahtar kelime yoksa, "isim gibi gorunen" ilk satiri sec
+    if not name:
+        for i, line in enumerate(lines):
+            if PHONE_RE.fullmatch(line.replace(" ", "")):
+                continue
+            if ID_LINE_RE.match(line.replace(" ", "")):
+                continue
+            if looks_like_name(line):
+                name = line
+                name_line_index = i
+                break
 
     address_lines = []
     for i, line in enumerate(lines):
@@ -213,6 +252,40 @@ def delete_shipment(shipment_id):
     conn.commit()
     conn.close()
     return "", 204
+
+
+@app.route("/api/verify-address", methods=["POST"])
+def verify_address():
+    body = request.get_json(silent=True) or {}
+    address = (body.get("address") or "").strip()
+    if not address:
+        return jsonify({"error": "Adres bos olamaz"}), 400
+
+    try:
+        resp = requests.get(
+            "https://nominatim.openstreetmap.org/search",
+            params={
+                "q": address,
+                "format": "json",
+                "addressdetails": 1,
+                "limit": 1,
+                "countrycodes": "tr",
+            },
+            headers={"User-Agent": "kargo-defteri-dukkan-uygulamasi/1.0"},
+            timeout=15,
+        )
+        results = resp.json()
+    except Exception as e:
+        app.logger.error("Adres dogrulama hatasi: %s", e)
+        return jsonify({"error": f"Adres dogrulama servisine ulasilamadi: {e}"}), 502
+
+    if results:
+        top = results[0]
+        return jsonify({
+            "found": True,
+            "display_name": top.get("display_name", ""),
+        })
+    return jsonify({"found": False})
 
 
 if __name__ == "__main__":
