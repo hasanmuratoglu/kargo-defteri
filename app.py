@@ -68,7 +68,7 @@ def ocr():
         "requests": [
             {
                 "image": {"content": image_b64},
-                "features": [{"type": "TEXT_DETECTION"}],
+                "features": [{"type": "DOCUMENT_TEXT_DETECTION"}],
                 "imageContext": {"languageHints": ["tr"]},
             }
         ]
