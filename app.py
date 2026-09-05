@@ -81,11 +81,19 @@ def ocr():
             timeout=30,
         )
         data = resp.json()
-        if resp.status_code != 200:
-            app.logger.error("Vision API HTTP %s: %s", resp.status_code, data)
     except requests.RequestException as e:
         app.logger.error("Vision API istegi basarisiz: %s", e)
         return jsonify({"error": f"OCR servisine ulasilamadi: {e}"}), 502
+
+    # Google, yetki/faturalandirma gibi hatalari "responses" disinda, en ust
+    # seviyede {"error": {...}} olarak donebiliyor - bunu once kontrol et.
+    if "error" in data:
+        app.logger.error("Vision API ust seviye hata: %s", data["error"])
+        return jsonify({"error": data["error"].get("message", "OCR hatasi (ust seviye)")}), 502
+
+    if resp.status_code != 200:
+        app.logger.error("Vision API HTTP %s: %s", resp.status_code, data)
+        return jsonify({"error": f"OCR servisi HTTP {resp.status_code} dondu"}), 502
 
     response_block = (data.get("responses") or [{}])[0]
     if "error" in response_block:
