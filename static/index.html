@@ -36,6 +36,7 @@
   }
   .field textarea { resize: vertical; min-height: 56px; }
   .field input:focus, .field select:focus, .field textarea:focus { outline: none; border-color: var(--accent); }
+  .field-error { border-color: var(--danger) !important; }
   .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .ocr-status { display: flex; align-items: center; gap: 8px; font-size: 0.85rem; color: var(--accent); margin-bottom: 14px; font-family: var(--mono); }
   .ocr-status.err { color: var(--danger); }
@@ -141,6 +142,7 @@
       <input type="text" id="fEnteredBy" placeholder="Adın">
     </div>
 
+    <div id="formError" style="display:none; color:var(--danger); font-size:0.85rem; margin-bottom:10px; font-weight:500;"></div>
     <button type="button" class="primary" id="saveBtn">Kaydı ekle</button>
   </div>
 
@@ -290,11 +292,45 @@
     photoActions.style.display = 'none';
     rawTextBox.style.display = 'none';
     setOcr('', null);
+    fContent.classList.remove('field-error');
+    fCarrier.classList.remove('field-error');
+    $('formError').style.display = 'none';
   }
 
+  fContent.addEventListener('input', () => {
+    if (fContent.value.trim()) {
+      fContent.classList.remove('field-error');
+      if ($('formError').textContent.includes('içeriği')) $('formError').style.display = 'none';
+    }
+  });
+  fCarrier.addEventListener('change', () => {
+    if (fCarrier.value) {
+      fCarrier.classList.remove('field-error');
+      if ($('formError').textContent.includes('firması')) $('formError').style.display = 'none';
+    }
+  });
+
   saveBtn.addEventListener('click', async () => {
-    if (!fContent.value.trim()) { fContent.focus(); return; }
-    if (!fCarrier.value) { fCarrier.focus(); return; }
+    fContent.classList.remove('field-error');
+    fCarrier.classList.remove('field-error');
+    $('formError').style.display = 'none';
+
+    if (!fContent.value.trim()) {
+      fContent.classList.add('field-error');
+      $('formError').textContent = 'Kargo içeriği boş bırakılamaz.';
+      $('formError').style.display = 'block';
+      fContent.focus();
+      fContent.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      return;
+    }
+    if (!fCarrier.value) {
+      fCarrier.classList.add('field-error');
+      $('formError').textContent = 'Kargo firması seçilmeli.';
+      $('formError').style.display = 'block';
+      fCarrier.focus();
+      fCarrier.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      return;
+    }
     saveBtn.disabled = true; saveBtn.textContent = 'Kaydediliyor…';
     try {
       if (fEnteredBy.value.trim()) {
