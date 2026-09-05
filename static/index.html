@@ -150,6 +150,12 @@
     <h2>KAYITLAR</h2>
     <div id="listEl"><div class="empty">Yükleniyor…</div></div>
   </div>
+
+  <div class="label-card" style="margin-top:8px;" id="closeDayPanel" hidden>
+    <h2 style="font-size:0.82rem;color:var(--ink-soft);font-weight:600;margin:0 0 12px;font-family:var(--mono);">GÜN SONU</h2>
+    <button type="button" class="secondary" id="closeDayBtn" style="width:100%;">Günü kapat (Excel gönder + temizle)</button>
+    <div id="closeDayStatus" style="font-size:0.85rem;margin-top:10px;color:var(--ink-soft);"></div>
+  </div>
 </div>
 
 <div id="modalRoot"></div>
@@ -419,6 +425,49 @@
     } catch (e) {
       if (!listEl.children.length) listEl.innerHTML = '<div class="empty">Bağlantı kurulamadı.</div>';
     }
+  }
+
+  $('closeDayBtn').addEventListener('click', async () => {
+    const statusEl = $('closeDayStatus');
+    if (!confirm('Tüm kayıtlar Excel olarak mail atılıp veritabanından SİLİNECEK. Emin misin?')) return;
+
+    let secret = sessionStorage.getItem('close_day_secret');
+    if (!secret) {
+      secret = prompt('Gizli anahtarı gir:');
+      if (!secret) return;
+      sessionStorage.setItem('close_day_secret', secret);
+    }
+
+    statusEl.textContent = 'İşleniyor…';
+    statusEl.style.color = 'var(--ink-soft)';
+    try {
+      const res = await fetch('/api/close-day?secret=' + encodeURIComponent(secret), { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) {
+        if (res.status === 403) sessionStorage.removeItem('close_day_secret');
+        throw new Error(data.error || ('HTTP ' + res.status));
+      }
+      statusEl.textContent = '✓ ' + (data.message || 'Tamamlandı') + ' (' + (data.count ?? 0) + ' kayıt)';
+      statusEl.style.color = 'var(--accent)';
+      loadList();
+    } catch (e) {
+      statusEl.textContent = 'Hata: ' + e.message;
+      statusEl.style.color = 'var(--danger)';
+    }
+  });
+
+  // "Gun sonu" paneli sadece ozel bir linkle (?admin=1) acilir, calisanlar
+  // normal linkte bu paneli hic gormez. Bir kere acilinca tarayicida
+  // hatirlanir (aninda kapanmasin diye), boylece Hasan her seferinde
+  // ?admin=1 eklemek zorunda kalmaz.
+  const urlParams = new URLSearchParams(window.location.search);
+  if (urlParams.get('admin') === '1') {
+    try { localStorage.setItem('kargo_admin_unlocked', '1'); } catch (e) {}
+  }
+  let isAdmin = false;
+  try { isAdmin = localStorage.getItem('kargo_admin_unlocked') === '1'; } catch (e) {}
+  if (isAdmin) {
+    $('closeDayPanel').hidden = false;
   }
 
   loadList();
