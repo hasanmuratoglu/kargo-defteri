@@ -80,13 +80,16 @@ def ocr():
             json=payload,
             timeout=30,
         )
-        resp.raise_for_status()
         data = resp.json()
+        if resp.status_code != 200:
+            app.logger.error("Vision API HTTP %s: %s", resp.status_code, data)
     except requests.RequestException as e:
+        app.logger.error("Vision API istegi basarisiz: %s", e)
         return jsonify({"error": f"OCR servisine ulasilamadi: {e}"}), 502
 
     response_block = (data.get("responses") or [{}])[0]
     if "error" in response_block:
+        app.logger.error("Vision API response error: %s", response_block["error"])
         return jsonify({"error": response_block["error"].get("message", "OCR hatasi")}), 502
 
     full_text = response_block.get("fullTextAnnotation", {}).get("text", "")
