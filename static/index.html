@@ -93,7 +93,7 @@
 
     <div class="ocr-status" id="ocrStatus" style="display:none;"></div>
     <div class="raw-text-box" id="rawTextBox" style="display:none;">
-      <div class="lbl">Fotoğraftan okunan yazı (gerekeni aşağıya kopyala)</div>
+      <div class="lbl">Fotoğraftan okunan tam yazı (referans / kontrol için)</div>
       <div id="rawTextContent"></div>
     </div>
 
@@ -205,10 +205,12 @@
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
       if (data.phone) fPhone.value = data.phone;
+      if (data.name) fName.value = data.name;
+      if (data.address) fAddress.value = data.address;
       if (data.raw_text) {
         rawTextBox.style.display = 'block';
         rawTextContent.textContent = data.raw_text;
-        setOcr('Yazı okundu — aşağıdan isim/adresi kutulara kopyala.', 'ok');
+        setOcr('Yazı okundu ve alanlara dolduruldu — kontrol edip düzeltebilirsin.', 'ok');
       } else {
         setOcr('Yazı okunamadı — elle girebilirsin.', 'err');
       }
