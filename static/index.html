@@ -74,7 +74,7 @@
   </header>
 
   <div class="label-card">
-    <div class="photo-zone" id="photoZone">
+    <div class="photo-zone" id="photoZone" style="display:none;">
       <div class="hint" id="photoHint">
         <strong>Etiketin fotoğrafını çek</strong>
         Yazılar otomatik okunur, sen düzenlersin
@@ -84,7 +84,12 @@
       <button type="button" class="secondary" id="retakeBtn">Yeniden çek</button>
       <button type="button" class="secondary" id="rereadBtn">Tekrar oku</button>
     </div>
-    <input type="file" id="fileInput" accept="image/*" capture="environment">
+    <div class="photo-buttons" id="photoButtons" style="display:flex; gap:8px; margin-bottom:16px;">
+      <button type="button" class="secondary" id="cameraBtn" style="flex:1;">📷 Fotoğraf çek</button>
+      <button type="button" class="secondary" id="galleryBtn" style="flex:1;">🖼️ Galeriden seç</button>
+    </div>
+    <input type="file" id="cameraInput" accept="image/*" capture="environment">
+    <input type="file" id="galleryInput" accept="image/*">
 
     <div class="ocr-status" id="ocrStatus" style="display:none;"></div>
     <div class="raw-text-box" id="rawTextBox" style="display:none;">
@@ -147,7 +152,8 @@
 (function () {
   const $ = (id) => document.getElementById(id);
   const photoZone = $('photoZone'), photoHint = $('photoHint'), photoActions = $('photoActions');
-  const fileInput = $('fileInput'), ocrStatus = $('ocrStatus');
+  const photoButtons = $('photoButtons');
+  const ocrStatus = $('ocrStatus');
   const rawTextBox = $('rawTextBox'), rawTextContent = $('rawTextContent');
   const fName = $('fName'), fAddress = $('fAddress'), fPhone = $('fPhone'),
         fContent = $('fContent'), fCarrier = $('fCarrier'), fDate = $('fDate'), fEnteredBy = $('fEnteredBy');
@@ -216,24 +222,32 @@
     const compressed = await compressImage(file, 1600);
     currentPhotoFile = compressed;
     const url = URL.createObjectURL(compressed);
+    photoZone.style.display = 'block';
     photoZone.classList.add('has-photo');
     photoZone.innerHTML = '<img src="' + url + '" alt="Etiket fotoğrafı">';
+    photoButtons.style.display = 'none';
     photoActions.style.display = 'flex';
     await runOcr(compressed);
   }
 
-  photoZone.addEventListener('click', () => { if (!photoZone.classList.contains('has-photo')) fileInput.click(); });
-  fileInput.addEventListener('change', (e) => handleFile(e.target.files[0]));
-  $('retakeBtn').addEventListener('click', () => fileInput.click());
+  photoZone.addEventListener('click', () => {}); // artık sadece önizleme alanı
+  $('cameraBtn').addEventListener('click', () => $('cameraInput').click());
+  $('galleryBtn').addEventListener('click', () => $('galleryInput').click());
+  $('cameraInput').addEventListener('change', (e) => handleFile(e.target.files[0]));
+  $('galleryInput').addEventListener('change', (e) => handleFile(e.target.files[0]));
+  $('retakeBtn').addEventListener('click', () => { $('cameraInput').value = ''; $('galleryInput').value = ''; photoButtons.style.display = 'flex'; photoZone.style.display = 'none'; photoZone.classList.remove('has-photo'); photoActions.style.display = 'none'; rawTextBox.style.display = 'none'; setOcr('', null); });
   $('rereadBtn').addEventListener('click', () => { if (currentPhotoFile) runOcr(currentPhotoFile); });
 
   function resetForm() {
     fName.value = ''; fAddress.value = ''; fPhone.value = ''; fContent.value = ''; fCarrier.value = '';
     fDate.value = new Date().toISOString().slice(0, 10);
     currentPhotoFile = null;
+    $('cameraInput').value = ''; $('galleryInput').value = '';
     photoZone.classList.remove('has-photo');
+    photoZone.style.display = 'none';
     photoHint.innerHTML = '<strong>Etiketin fotoğrafını çek</strong>Yazılar otomatik okunur, sen düzenlersin';
     photoZone.innerHTML = ''; photoZone.appendChild(photoHint);
+    photoButtons.style.display = 'flex';
     photoActions.style.display = 'none';
     rawTextBox.style.display = 'none';
     setOcr('', null);
