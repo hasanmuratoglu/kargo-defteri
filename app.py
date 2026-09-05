@@ -1,19 +1,34 @@
 import os
 import re
+import io
 import sqlite3
 import base64
 import uuid
 from datetime import datetime, timezone
 
-import requests
+import numpy as np
+from PIL import Image
 from flask import Flask, request, jsonify, send_from_directory
 
 app = Flask(__name__, static_folder="static", static_url_path="")
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "kargo.db")
-GOOGLE_VISION_API_KEY = os.environ.get("GOOGLE_VISION_API_KEY", "")
 
 PHONE_RE = re.compile(r"0?5\d{2}[\s.-]?\d{3}[\s.-]?\d{2}[\s.-]?\d{2}")
+
+# EasyOCR okuyucusu ilk kullanımda yükleniyor (biraz zaman alabilir),
+# sonraki her istekte hazır bulunuyor - her seferinde yeniden yüklenmiyor.
+_reader = None
+
+
+def get_reader():
+    global _reader
+    if _reader is None:
+        import easyocr
+        app.logger.info("EasyOCR modeli yukleniyor (ilk calistirmada biraz surer)...")
+        _reader = easyocr.Reader(["tr", "en"], gpu=False)
+        app.logger.info("EasyOCR modeli hazir.")
+    return _reader
 
 
 def get_db():
@@ -54,53 +69,21 @@ def index():
 
 @app.route("/api/ocr", methods=["POST"])
 def ocr():
-    if not GOOGLE_VISION_API_KEY:
-        return jsonify({"error": "OCR yapilandirilmamis (GOOGLE_VISION_API_KEY eksik)"}), 500
-
     file = request.files.get("photo")
     if not file:
         return jsonify({"error": "Fotograf gelmedi"}), 400
 
     image_bytes = file.read()
-    image_b64 = base64.b64encode(image_bytes).decode("utf-8")
-
-    payload = {
-        "requests": [
-            {
-                "image": {"content": image_b64},
-                "features": [{"type": "DOCUMENT_TEXT_DETECTION"}],
-                "imageContext": {"languageHints": ["tr"]},
-            }
-        ]
-    }
 
     try:
-        resp = requests.post(
-            f"https://vision.googleapis.com/v1/images:annotate?key={GOOGLE_VISION_API_KEY}",
-            json=payload,
-            timeout=30,
-        )
-        data = resp.json()
-    except requests.RequestException as e:
-        app.logger.error("Vision API istegi basarisiz: %s", e)
-        return jsonify({"error": f"OCR servisine ulasilamadi: {e}"}), 502
-
-    # Google, yetki/faturalandirma gibi hatalari "responses" disinda, en ust
-    # seviyede {"error": {...}} olarak donebiliyor - bunu once kontrol et.
-    if "error" in data:
-        app.logger.error("Vision API ust seviye hata: %s", data["error"])
-        return jsonify({"error": data["error"].get("message", "OCR hatasi (ust seviye)")}), 502
-
-    if resp.status_code != 200:
-        app.logger.error("Vision API HTTP %s: %s", resp.status_code, data)
-        return jsonify({"error": f"OCR servisi HTTP {resp.status_code} dondu"}), 502
-
-    response_block = (data.get("responses") or [{}])[0]
-    if "error" in response_block:
-        app.logger.error("Vision API response error: %s", response_block["error"])
-        return jsonify({"error": response_block["error"].get("message", "OCR hatasi")}), 502
-
-    full_text = response_block.get("fullTextAnnotation", {}).get("text", "")
+        reader = get_reader()
+        img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        img_np = np.array(img)
+        lines = reader.readtext(img_np, detail=0, paragraph=True)
+        full_text = "\n".join(lines)
+    except Exception as e:
+        app.logger.error("EasyOCR hatasi: %s", e)
+        return jsonify({"error": f"OCR calisirken hata olustu: {e}"}), 500
 
     phone_match = PHONE_RE.search(full_text)
     phone = phone_match.group(0) if phone_match else ""
