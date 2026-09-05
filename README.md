@@ -73,3 +73,64 @@ ilerde bir veritabanı eklentisine taşınabilir.
 - `static/index.html` — arayüz (fotoğraf çekme, form, liste)
 - `requirements.txt` — Python bağımlılıkları
 - `Procfile` — Render/Heroku için başlatma komutu
+
+## Günü kapatma (otomatik Excel + mail + temizlik)
+
+Her gece belirlenen saatte tüm kayıtları bir Excel dosyasına dökup mail atan,
+sonra veritabanını temizleyen bir özellik. Bu sayede Render'ın ücretsiz planındaki
+"disk kalıcı değil" riski önemsizleşiyor — her günün verisi zaten o gün mail
+olarak arşivleniyor.
+
+### 1) Gmail'den "Uygulama Şifresi" (App Password) al
+
+Bu, normal Gmail şifren DEĞİL — özel, sadece bu uygulamanın kullanacağı bir şifre.
+
+1. https://myaccount.google.com/security adresine git.
+2. "2 Adımlı Doğrulama" (2-Step Verification) kapalıysa önce onu aç (zorunlu ön koşul).
+3. Aynı sayfada veya https://myaccount.google.com/apppasswords adresinden
+   "Uygulama Şifreleri" bölümüne gir.
+4. Bir isim yaz (örn. "Kargo Defteri"), oluştur.
+5. Google sana 16 haneli bir şifre verecek (boşluksuz kopyala) — bunu
+   `GMAIL_APP_PASSWORD` olarak kullanacağız.
+
+### 2) Render'a ortam değişkenlerini ekle
+
+Render Dashboard > servisin > Environment Variables kısmına ekle:
+
+| Key | Value |
+|---|---|
+| `GMAIL_ADDRESS` | `h.muratoglu97@gmail.com` |
+| `GMAIL_APP_PASSWORD` | (Google'dan aldığın 16 haneli şifre) |
+| `REPORT_TO_EMAIL` | `h.muratoglu97@gmail.com` |
+| `CRON_SECRET` | `ATQcf3bVkyDs5Lo0-pkiID9X_bVqMboC` (bu rastgele üretildi, aynen kullanabilirsin ya da kendi rastgele metnini yaz) |
+
+### 3) Render'da bir Cron Job oluştur
+
+1. Render Dashboard'da **"New +" > "Cron Job"** seç.
+2. **Environment:** Docker
+3. **Image:** `curlimages/curl:latest`
+4. **Command:**
+   ```
+   curl -s -X POST "https://kargo-defteri.onrender.com/api/close-day?secret=ATQcf3bVkyDs5Lo0-pkiID9X_bVqMboC"
+   ```
+   (kendi Render linkini ve kendi CRON_SECRET'ını kullan)
+5. **Schedule:** `0 20 * * *`
+   - Bu, **UTC saatine göre 20:00** demek — Türkiye UTC+3 olduğu için bu, **Türkiye saatiyle gece 23:00**'a denk geliyor.
+6. Oluştur.
+
+Artık her gece saat 23:00'te (Türkiye saati) otomatik olarak: tüm kayıtlar Excel'e
+dökülüp `h.muratoglu97@gmail.com` adresine mail atılacak, sonra veritabanı
+temizlenecek.
+
+### Elle test etmek istersen
+
+Tarayıcıdan ya da bir HTTP isteğiyle şu adrese POST isteği atarsan (GET ile
+tarayıcıya yapıştırman da işe yarar, sadece POST beklediği için bazı
+tarayıcılarda "method not allowed" diyebilir — Postman/curl ile dene):
+
+```
+https://kargo-defteri.onrender.com/api/close-day?secret=ATQcf3bVkyDs5Lo0-pkiID9X_bVqMboC
+```
+
+Kayıt yoksa mail atmaz, "kayıt yok" der. Mail gönderimi başarısız olursa
+kayıtlar SİLİNMEZ (güvenlik için) — hatayı görürsün, tekrar denenebilir.
