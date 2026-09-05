@@ -11,7 +11,7 @@ from flask import Flask, request, jsonify, send_from_directory
 app = Flask(__name__, static_folder="static", static_url_path="")
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "kargo.db")
-OCR_SPACE_API_KEY = os.environ.get("OCR_SPACE_API_KEY", "")
+OCR_SPACE_API_KEY = os.environ.get("OCR_SPACE_API_KEY", "").strip()
 
 PHONE_RE = re.compile(r"0?5\d{2}[\s.-]?\d{3}[\s.-]?\d{2}[\s.-]?\d{2}")
 
@@ -79,10 +79,12 @@ def ocr():
             },
             timeout=30,
         )
-        data = resp.json()
-    except requests.RequestException as e:
-        app.logger.error("OCR.space istegi basarisiz: %s", e)
+    except Exception as e:
+        app.logger.error("OCR.space istegine baglanilamadi: %s", e)
         return jsonify({"error": f"OCR servisine ulasilamadi: {e}"}), 502
+
+    try:
+        data = resp.json()
     except ValueError:
         app.logger.error("OCR.space gecersiz yanit dondu: %s", resp.text[:500])
         return jsonify({"error": "OCR servisi beklenmeyen bir yanit dondu"}), 502
