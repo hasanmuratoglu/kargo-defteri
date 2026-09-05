@@ -81,27 +81,34 @@ sonra veritabanını temizleyen bir özellik. Bu sayede Render'ın ücretsiz pla
 "disk kalıcı değil" riski önemsizleşiyor — her günün verisi zaten o gün mail
 olarak arşivleniyor.
 
-### 1) Gmail'den "Uygulama Şifresi" (App Password) al
+**Önemli not:** İlk denemede Gmail'e klasik SMTP protokolüyle bağlanmayı denedik,
+ama Render'ın ücretsiz planı spam kötüye kullanımını önlemek için çıkış SMTP
+portlarını (465/587) engelliyor ("Network is unreachable" hatası bundan
+kaynaklanıyordu). Bunun yerine **Resend** adında, normal web trafiği gibi HTTPS
+üzerinden çalışan (bu yüzden engellenmeyen) ücretsiz bir e-posta servisi
+kullanıyoruz.
 
-Bu, normal Gmail şifren DEĞİL — özel, sadece bu uygulamanın kullanacağı bir şifre.
+### 1) Resend'de ücretsiz hesap aç
 
-1. https://myaccount.google.com/security adresine git.
-2. "2 Adımlı Doğrulama" (2-Step Verification) kapalıysa önce onu aç (zorunlu ön koşul).
-3. Aynı sayfada veya https://myaccount.google.com/apppasswords adresinden
-   "Uygulama Şifreleri" bölümüne gir.
-4. Bir isim yaz (örn. "Kargo Defteri"), oluştur.
-5. Google sana 16 haneli bir şifre verecek (boşluksuz kopyala) — bunu
-   `GMAIL_APP_PASSWORD` olarak kullanacağız.
+1. https://resend.com adresine git, ücretsiz hesap aç (kart istemiyor).
+   Kayıt olurken **mail atılacak Gmail adresini** (h.muratoglu97@gmail.com)
+   kullanman öneriliyor — çünkü ücretsiz/doğrulanmamış modda Resend sadece
+   **hesabına kayıtlı olan adrese** mail gönderebiliyor, başka bir adrese değil.
+2. Giriş yaptıktan sonra sol menüden **"API Keys"** kısmına gir.
+3. **"Create API Key"** de, bir isim ver (örn. "kargo-defteri"), oluştur.
+4. Sana `re_` ile başlayan bir anahtar verecek — bunu kopyala, bir daha
+   gösterilmeyecek.
 
 ### 2) Render'a ortam değişkenlerini ekle
 
-Render Dashboard > servisin > Environment Variables kısmına ekle:
+Render Dashboard > servisin > Environment Variables kısmına ekle (varsa eski
+`GMAIL_ADDRESS` / `GMAIL_APP_PASSWORD` değişkenlerini silebilirsin, artık
+kullanılmıyor):
 
 | Key | Value |
 |---|---|
-| `GMAIL_ADDRESS` | `h.muratoglu97@gmail.com` |
-| `GMAIL_APP_PASSWORD` | (Google'dan aldığın 16 haneli şifre) |
-| `REPORT_TO_EMAIL` | `h.muratoglu97@gmail.com` |
+| `RESEND_API_KEY` | (Resend'den aldığın `re_...` ile başlayan anahtar) |
+| `REPORT_TO_EMAIL` | `h.muratoglu97@gmail.com` (Resend hesabını açarken kullandığın adresin AYNISI olmalı) |
 | `CRON_SECRET` | `ATQcf3bVkyDs5Lo0-pkiID9X_bVqMboC` (bu rastgele üretildi, aynen kullanabilirsin ya da kendi rastgele metnini yaz) |
 
 ### 3) Render'da bir Cron Job oluştur
@@ -124,13 +131,13 @@ temizlenecek.
 
 ### Elle test etmek istersen
 
-Tarayıcıdan ya da bir HTTP isteğiyle şu adrese POST isteği atarsan (GET ile
-tarayıcıya yapıştırman da işe yarar, sadece POST beklediği için bazı
-tarayıcılarda "method not allowed" diyebilir — Postman/curl ile dene):
-
-```
-https://kargo-defteri.onrender.com/api/close-day?secret=ATQcf3bVkyDs5Lo0-pkiID9X_bVqMboC
-```
+Sitenin en altında **"Günü kapat (Excel gönder + temizle)"** butonu var — ona
+tıklayıp gizli anahtarı (`CRON_SECRET` değerini) girerek elle test edebilirsin.
 
 Kayıt yoksa mail atmaz, "kayıt yok" der. Mail gönderimi başarısız olursa
 kayıtlar SİLİNMEZ (güvenlik için) — hatayı görürsün, tekrar denenebilir.
+
+### Resend'in ücretsiz plan sınırları
+
+Ayda 3.000, günde 100 mail — dükkanın günde 1 mail atacağı düşünülürse bu
+limitin çok altında, sorun olmaz.
