@@ -3,9 +3,7 @@ import re
 import sqlite3
 import base64
 import uuid
-import smtplib
 from io import BytesIO
-from email.message import EmailMessage
 from datetime import datetime, timezone, timedelta
 
 import requests
@@ -18,9 +16,9 @@ app = Flask(__name__, static_folder="static", static_url_path="")
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "kargo.db")
 OCR_SPACE_API_KEY = os.environ.get("OCR_SPACE_API_KEY", "").strip()
-GMAIL_ADDRESS = os.environ.get("GMAIL_ADDRESS", "").strip()
-GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD", "").strip()
-REPORT_TO_EMAIL = os.environ.get("REPORT_TO_EMAIL", "").strip() or GMAIL_ADDRESS
+RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "").strip()
+RESEND_FROM_EMAIL = os.environ.get("RESEND_FROM_EMAIL", "onboarding@resend.dev").strip()
+REPORT_TO_EMAIL = os.environ.get("REPORT_TO_EMAIL", "").strip()
 CRON_SECRET = os.environ.get("CRON_SECRET", "").strip()
 
 
@@ -371,23 +369,34 @@ def build_excel(records):
 
 
 def send_report_email(excel_bytes, record_count, day_str):
-    msg = EmailMessage()
-    msg["Subject"] = f"Kargo Defteri - {day_str} Gunluk Rapor ({record_count} kayit)"
-    msg["From"] = GMAIL_ADDRESS
-    msg["To"] = REPORT_TO_EMAIL
-    msg.set_content(
-        f"{day_str} tarihine ait {record_count} kargo kaydi ektedir.\n\n"
-        "Bu e-posta Kargo Defteri uygulamasi tarafindan otomatik gonderilmistir."
+    """Resend'in HTTPS API'si uzerinden mail gonderir (SMTP portlari Render'in
+    ucretsiz planinda engelli oldugu icin klasik SMTP calismiyor)."""
+    payload = {
+        "from": f"Kargo Defteri <{RESEND_FROM_EMAIL}>",
+        "to": [REPORT_TO_EMAIL],
+        "subject": f"Kargo Defteri - {day_str} Gunluk Rapor ({record_count} kayit)",
+        "text": (
+            f"{day_str} tarihine ait {record_count} kargo kaydi ektedir.\n\n"
+            "Bu e-posta Kargo Defteri uygulamasi tarafindan otomatik gonderilmistir."
+        ),
+        "attachments": [
+            {
+                "filename": f"kargo-defteri-{day_str}.xlsx",
+                "content": base64.b64encode(excel_bytes).decode("ascii"),
+            }
+        ],
+    }
+    resp = requests.post(
+        "https://api.resend.com/emails",
+        headers={
+            "Authorization": f"Bearer {RESEND_API_KEY}",
+            "Content-Type": "application/json",
+        },
+        json=payload,
+        timeout=30,
     )
-    msg.add_attachment(
-        excel_bytes,
-        maintype="application",
-        subtype="vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        filename=f"kargo-defteri-{day_str}.xlsx",
-    )
-    with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=30) as smtp:
-        smtp.login(GMAIL_ADDRESS, GMAIL_APP_PASSWORD)
-        smtp.send_message(msg)
+    if resp.status_code >= 300:
+        raise RuntimeError(f"Resend API hatasi ({resp.status_code}): {resp.text[:300]}")
 
 
 @app.route("/api/close-day", methods=["POST"])
@@ -399,8 +408,8 @@ def close_day():
     if not CRON_SECRET or secret != CRON_SECRET:
         return jsonify({"error": "Yetkisiz"}), 403
 
-    if not GMAIL_ADDRESS or not GMAIL_APP_PASSWORD:
-        return jsonify({"error": "E-posta ayarlari eksik (GMAIL_ADDRESS / GMAIL_APP_PASSWORD)"}), 500
+    if not RESEND_API_KEY or not REPORT_TO_EMAIL:
+        return jsonify({"error": "E-posta ayarlari eksik (RESEND_API_KEY / REPORT_TO_EMAIL)"}), 500
 
     conn = get_db()
     rows = conn.execute(
