@@ -104,6 +104,10 @@
     <div class="field">
       <label for="fAddress">Adres</label>
       <textarea id="fAddress" placeholder="Elle yaz ya da okunan yazıdan kopyala"></textarea>
+      <div style="display:flex; align-items:center; gap:10px; margin-top:6px;">
+        <button type="button" class="secondary" id="verifyAddressBtn" style="padding:6px 10px; font-size:0.8rem;">Adresi doğrula</button>
+        <span id="addressVerifyStatus" style="font-size:0.8rem; color:var(--ink-soft);"></span>
+      </div>
     </div>
     <div class="field">
       <label for="fPhone">Telefon (varsa)</label>
@@ -231,6 +235,33 @@
     photoActions.style.display = 'flex';
     await runOcr(compressed);
   }
+
+  $('verifyAddressBtn').addEventListener('click', async () => {
+    const addr = fAddress.value.trim();
+    const statusEl = $('addressVerifyStatus');
+    if (!addr) { statusEl.textContent = 'Önce adres yaz.'; statusEl.style.color = 'var(--danger)'; return; }
+    statusEl.textContent = 'Kontrol ediliyor…';
+    statusEl.style.color = 'var(--ink-soft)';
+    try {
+      const res = await fetch('/api/verify-address', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ address: addr })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'hata');
+      if (data.found) {
+        statusEl.textContent = '✓ Bulundu: ' + data.display_name;
+        statusEl.style.color = 'var(--accent)';
+      } else {
+        statusEl.textContent = '⚠ Bu adres bulunamadı — yazımı kontrol et.';
+        statusEl.style.color = 'var(--danger)';
+      }
+    } catch (e) {
+      statusEl.textContent = 'Doğrulama yapılamadı, tekrar dene.';
+      statusEl.style.color = 'var(--danger)';
+    }
+  });
 
   photoZone.addEventListener('click', () => {}); // artık sadece önizleme alanı
   $('cameraBtn').addEventListener('click', () => $('cameraInput').click());
