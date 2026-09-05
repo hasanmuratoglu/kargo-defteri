@@ -1,34 +1,19 @@
 import os
 import re
-import io
 import sqlite3
 import base64
 import uuid
 from datetime import datetime, timezone
 
-import numpy as np
-from PIL import Image
+import requests
 from flask import Flask, request, jsonify, send_from_directory
 
 app = Flask(__name__, static_folder="static", static_url_path="")
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "kargo.db")
+OCR_SPACE_API_KEY = os.environ.get("OCR_SPACE_API_KEY", "")
 
 PHONE_RE = re.compile(r"0?5\d{2}[\s.-]?\d{3}[\s.-]?\d{2}[\s.-]?\d{2}")
-
-# EasyOCR okuyucusu ilk kullanımda yükleniyor (biraz zaman alabilir),
-# sonraki her istekte hazır bulunuyor - her seferinde yeniden yüklenmiyor.
-_reader = None
-
-
-def get_reader():
-    global _reader
-    if _reader is None:
-        import easyocr
-        app.logger.info("EasyOCR modeli yukleniyor (ilk calistirmada biraz surer)...")
-        _reader = easyocr.Reader(["tr", "en"], gpu=False)
-        app.logger.info("EasyOCR modeli hazir.")
-    return _reader
 
 
 def get_db():
@@ -69,21 +54,48 @@ def index():
 
 @app.route("/api/ocr", methods=["POST"])
 def ocr():
+    if not OCR_SPACE_API_KEY:
+        return jsonify({"error": "OCR yapilandirilmamis (OCR_SPACE_API_KEY eksik)"}), 500
+
     file = request.files.get("photo")
     if not file:
         return jsonify({"error": "Fotograf gelmedi"}), 400
 
     image_bytes = file.read()
+    if len(image_bytes) > 1024 * 1024:
+        return jsonify({"error": "Fotograf cok buyuk (1MB limiti), lutfen tekrar dene"}), 400
 
     try:
-        reader = get_reader()
-        img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-        img_np = np.array(img)
-        lines = reader.readtext(img_np, detail=0, paragraph=True)
-        full_text = "\n".join(lines)
-    except Exception as e:
-        app.logger.error("EasyOCR hatasi: %s", e)
-        return jsonify({"error": f"OCR calisirken hata olustu: {e}"}), 500
+        resp = requests.post(
+            "https://api.ocr.space/parse/image",
+            headers={"apikey": OCR_SPACE_API_KEY},
+            files={"file": ("label.jpg", image_bytes, file.mimetype or "image/jpeg")},
+            data={
+                "language": "tur",
+                "OCREngine": "2",
+                "isOverlayRequired": "false",
+                "scale": "true",
+                "detectOrientation": "true",
+            },
+            timeout=30,
+        )
+        data = resp.json()
+    except requests.RequestException as e:
+        app.logger.error("OCR.space istegi basarisiz: %s", e)
+        return jsonify({"error": f"OCR servisine ulasilamadi: {e}"}), 502
+    except ValueError:
+        app.logger.error("OCR.space gecersiz yanit dondu: %s", resp.text[:500])
+        return jsonify({"error": "OCR servisi beklenmeyen bir yanit dondu"}), 502
+
+    if data.get("IsErroredOnProcessing"):
+        msg = data.get("ErrorMessage") or ["Bilinmeyen OCR hatasi"]
+        msg = msg[0] if isinstance(msg, list) else msg
+        app.logger.error("OCR.space hata: %s", msg)
+        return jsonify({"error": msg}), 502
+
+    parsed_results = data.get("ParsedResults") or []
+    full_text = parsed_results[0].get("ParsedText", "") if parsed_results else ""
+    full_text = full_text.strip()
 
     phone_match = PHONE_RE.search(full_text)
     phone = phone_match.group(0) if phone_match else ""
