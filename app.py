@@ -8,10 +8,18 @@ from datetime import datetime, timezone
 import requests
 from flask import Flask, request, jsonify, send_from_directory
 
+from tr_locations import TR_LOCATIONS
+
 app = Flask(__name__, static_folder="static", static_url_path="")
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "kargo.db")
 OCR_SPACE_API_KEY = os.environ.get("OCR_SPACE_API_KEY", "").strip()
+
+
+def tr_lower(s):
+    """Turkce I/i karakterlerini dogru sekilde kucult (Python'un varsayilan
+    .lower() metodu Turkce'de yanlis sonuc verir: 'İstanbul' -> 'i̇stanbul')."""
+    return s.replace("İ", "i").replace("I", "ı").lower()
 
 PHONE_RE = re.compile(r"0?5\d{2}[\s.-]?\d{3}[\s.-]?\d{2}[\s.-]?\d{2}")
 NAME_KEYWORDS = ["alıcı", "alici", "ad soyad", "isim soyisim", "gönderilen"]
@@ -39,6 +47,14 @@ def looks_like_name(line):
     if "kart sahibi" in line.lower():
         return False
     if not NAME_LINE_RE.match(line):
+        return False
+    # Tek kelimelik satirlar cogu zaman il/ilce adi oluyor (ornek: "Incirliova")
+    # - bunlari isim adayi olarak degerlendirme, kesin bir il/ilce ile eslesiyorsa ele.
+    if len(words) == 1 and tr_lower(words[0]) in TR_LOCATIONS:
+        return False
+    # Cok kelimeli satirlarda da HERHANGI bir kelime bilinen bir il/ilce ismiyse
+    # (ornek: "Aydın Mah." gibi durumlar), riski azaltmak icin yine ele.
+    if any(tr_lower(w) in TR_LOCATIONS for w in words):
         return False
     return True
 
