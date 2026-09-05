@@ -213,7 +213,7 @@
         setOcr('Yazı okunamadı — elle girebilirsin.', 'err');
       }
     } catch (e) {
-      setOcr('Otomatik okuma başarısız — elle girebilirsin.', 'err');
+      setOcr('Otomatik okuma başarısız: ' + (e.message || 'bilinmeyen hata'), 'err');
     }
   }
 
