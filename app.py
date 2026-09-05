@@ -14,6 +14,52 @@ DB_PATH = os.path.join(os.path.dirname(__file__), "kargo.db")
 OCR_SPACE_API_KEY = os.environ.get("OCR_SPACE_API_KEY", "").strip()
 
 PHONE_RE = re.compile(r"0?5\d{2}[\s.-]?\d{3}[\s.-]?\d{2}[\s.-]?\d{2}")
+NAME_KEYWORDS = ["alıcı", "alici", "ad soyad", "isim soyisim", "gönderilen"]
+ID_LINE_RE = re.compile(r"^[\d\s]{9,20}$")  # TC kimlik no gibi sadece rakamlardan olusan satirlar
+
+
+def guess_fields(raw_text):
+    """Ham OCR metninden isim/adres/telefonu KURAL TABANLI tahmin eder.
+    Yapay zeka degil - basit satir/kelime eslesmesi. Kullanici her zaman
+    duzeltebilir, bu yuzden yanlis tahmin ciddi bir sorun degil."""
+    lines = [l.strip() for l in raw_text.splitlines() if l.strip()]
+
+    phone_match = PHONE_RE.search(raw_text)
+    phone = phone_match.group(0) if phone_match else ""
+
+    name = ""
+    name_line_index = None
+    for i, line in enumerate(lines):
+        low = line.lower()
+        matched_kw = next((k for k in NAME_KEYWORDS if k in low), None)
+        if matched_kw:
+            idx = low.find(matched_kw)
+            after = line[idx + len(matched_kw):].strip(" :.-")
+            if after:
+                name = after
+                name_line_index = i
+            elif i + 1 < len(lines):
+                name = lines[i + 1]
+                name_line_index = i + 1
+            break
+
+    address_lines = []
+    for i, line in enumerate(lines):
+        low = line.lower()
+        if i == name_line_index:
+            continue
+        if any(k in low for k in NAME_KEYWORDS):
+            continue
+        if "kart sahibi" in low:
+            continue
+        if PHONE_RE.fullmatch(line.replace(" ", "")):
+            continue
+        if ID_LINE_RE.match(line.replace(" ", "")):
+            continue
+        address_lines.append(line)
+
+    address = "\n".join(address_lines).strip()
+    return name, address, phone
 
 
 def get_db():
@@ -99,10 +145,14 @@ def ocr():
     full_text = parsed_results[0].get("ParsedText", "") if parsed_results else ""
     full_text = full_text.strip()
 
-    phone_match = PHONE_RE.search(full_text)
-    phone = phone_match.group(0) if phone_match else ""
+    name_guess, address_guess, phone = guess_fields(full_text)
 
-    return jsonify({"raw_text": full_text, "phone": phone})
+    return jsonify({
+        "raw_text": full_text,
+        "name": name_guess,
+        "address": address_guess,
+        "phone": phone,
+    })
 
 
 @app.route("/api/shipments", methods=["GET"])
