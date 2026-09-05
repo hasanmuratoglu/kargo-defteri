@@ -182,7 +182,7 @@
         const canvas = document.createElement('canvas');
         canvas.width = w; canvas.height = h;
         canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-        canvas.toBlob((blob) => resolve(blob), 'image/jpeg', 0.6);
+        canvas.toBlob((blob) => resolve(blob), 'image/jpeg', 0.88);
       };
       img.onerror = reject;
       reader.readAsDataURL(file);
@@ -213,7 +213,7 @@
 
   async function handleFile(file) {
     if (!file) return;
-    const compressed = await compressImage(file, 900);
+    const compressed = await compressImage(file, 1600);
     currentPhotoFile = compressed;
     const url = URL.createObjectURL(compressed);
     photoZone.classList.add('has-photo');
