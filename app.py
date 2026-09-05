@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 import requests
 from flask import Flask, request, jsonify, send_from_directory
 
-from tr_locations import TR_LOCATIONS
+from tr_locations import TR_LOCATIONS, TR_PROVINCES
 
 app = Flask(__name__, static_folder="static", static_url_path="")
 
@@ -21,7 +21,11 @@ def tr_lower(s):
     .lower() metodu Turkce'de yanlis sonuc verir: 'İstanbul' -> 'i̇stanbul')."""
     return s.replace("İ", "i").replace("I", "ı").lower()
 
-PHONE_RE = re.compile(r"0?5\d{2}[\s.-]?\d{3}[\s.-]?\d{2}[\s.-]?\d{2}")
+
+# Telefon: basinda 0 varsa toplam 11 hane (0 + 5xx xxx xx xx),
+# yoksa toplam 10 hane (5xx xxx xx xx). Bosluk/tire serbest.
+PHONE_CANDIDATE_RE = re.compile(r"0?5[\d\s.\-]{8,14}")
+
 NAME_KEYWORDS = ["alıcı", "alici", "ad soyad", "isim soyisim", "gönderilen"]
 ID_LINE_RE = re.compile(r"^[\d\s]{9,20}$")  # TC kimlik no gibi sadece rakamlardan olusan satirlar
 
@@ -33,6 +37,24 @@ ADDRESS_KEYWORD_RE = re.compile(
     re.IGNORECASE,
 )
 NAME_LINE_RE = re.compile(r"^[A-Za-zÇĞİÖŞÜçğıöşü'’\-\. ]+$")
+STARTS_UPPER_RE = re.compile(r"^[A-ZÇĞİÖŞÜ]")
+
+# Isim ararken sadece metnin en basindaki bu kadar satira bakiyoruz - isim
+# pratikte hemen hemen hep en ustte oluyor, adresin ortasindaki buyuk harfli
+# bir kelimeyi (semt/sokak adi gibi) isim sanma riskini azaltir.
+NAME_SEARCH_WINDOW = 3
+
+
+def extract_phone(raw_text):
+    """0 ile basliyorsa 11 hane, baslamiyorsa 10 hane kuralina gore telefon bulur."""
+    for m in PHONE_CANDIDATE_RE.finditer(raw_text):
+        candidate = m.group(0)
+        digits = re.sub(r"\D", "", candidate)
+        if digits.startswith("05") and len(digits) == 11:
+            return candidate.strip()
+        if digits.startswith("5") and len(digits) == 10:
+            return candidate.strip()
+    return ""
 
 
 def looks_like_name(line):
@@ -48,13 +70,11 @@ def looks_like_name(line):
         return False
     if not NAME_LINE_RE.match(line):
         return False
-    # Tek kelimelik satirlar cogu zaman il/ilce adi oluyor (ornek: "Incirliova")
-    # - bunlari isim adayi olarak degerlendirme, kesin bir il/ilce ile eslesiyorsa ele.
-    if len(words) == 1 and tr_lower(words[0]) in TR_LOCATIONS:
+    # Isim buyuk harfle baslar (Title Case ya da TAMAMEN BUYUK olabilir).
+    if not STARTS_UPPER_RE.match(line):
         return False
-    # Cok kelimeli satirlarda da HERHANGI bir kelime bilinen bir il/ilce ismiyse
-    # (ornek: "Aydın Mah." gibi durumlar), riski azaltmak icin yine ele.
-    if any(tr_lower(w) in TR_LOCATIONS for w in words):
+    # Bilinen bir il/ilce adiyla eslesen kelime iceren satirlar isim degildir.
+    if any(tr_lower(w.strip(".,")) in TR_LOCATIONS for w in words):
         return False
     return True
 
@@ -62,17 +82,36 @@ def looks_like_name(line):
 def guess_fields(raw_text):
     """Ham OCR metninden isim/adres/telefonu KURAL TABANLI tahmin eder.
     Yapay zeka degil - basit satir/kelime eslesmesi. Kullanici her zaman
-    duzeltebilir, bu yuzden yanlis tahmin ciddi bir sorun degil."""
+    duzeltebilir, bu yuzden yanlis tahmin ciddi bir sorun degil.
+
+    Kurallar:
+    - Telefon: 0 ile basliyorsa 11, baslamiyorsa 10 haneli rakam dizisi.
+    - Isim: metnin en basinda (ilk birkac satirda), buyuk harfle baslayan,
+      rakamsiz, adres kelimesi/il-ilce adi icermeyen 1-4 kelimelik satir.
+      "Alici" gibi bir anahtar kelime varsa o kesin oncelikli.
+    - Adres: isim ve telefon satirlari haric, metnin basindan ilk IL adi
+      gecen satira kadar (o satir dahil) olan her sey - cunku adreste il
+      adi normalde en sonda yazilir.
+    """
     lines = [l.strip() for l in raw_text.splitlines() if l.strip()]
 
-    phone_match = PHONE_RE.search(raw_text)
-    phone = phone_match.group(0) if phone_match else ""
+    phone = extract_phone(raw_text)
+
+    def is_phone_line(line):
+        return bool(extract_phone(line)) and len(line.replace(" ", "")) <= 15
+
+    def is_id_line(line):
+        return bool(ID_LINE_RE.match(line.replace(" ", "")))
+
+    # Isim/adres icin degerlendirilecek satirlar: telefon ve TC-kimlik gibi
+    # sadece rakamdan olusan satirlari disarida birakiyoruz.
+    content_lines = [l for l in lines if not is_phone_line(l) and not is_id_line(l)]
 
     name = ""
-    name_line_index = None
+    name_index = None
 
-    # 1. yol: "alici" gibi bir anahtar kelime var mi?
-    for i, line in enumerate(lines):
+    # 1. yol: "alici" gibi bir anahtar kelime var mi? (tum metinde aranir)
+    for i, line in enumerate(content_lines):
         low = line.lower()
         matched_kw = next((k for k in NAME_KEYWORDS if k in low), None)
         if matched_kw:
@@ -80,38 +119,44 @@ def guess_fields(raw_text):
             after = line[idx + len(matched_kw):].strip(" :.-")
             if after:
                 name = after
-                name_line_index = i
-            elif i + 1 < len(lines):
-                name = lines[i + 1]
-                name_line_index = i + 1
+                name_index = i
+            elif i + 1 < len(content_lines):
+                name = content_lines[i + 1]
+                name_index = i + 1
             break
 
-    # 2. yol (yedek): anahtar kelime yoksa, "isim gibi gorunen" ilk satiri sec
+    # 2. yol (yedek): anahtar kelime yoksa, SADECE metnin basindaki birkac
+    # satira bakarak "isim gibi gorunen" ilk satiri sec.
     if not name:
-        for i, line in enumerate(lines):
-            if PHONE_RE.fullmatch(line.replace(" ", "")):
-                continue
-            if ID_LINE_RE.match(line.replace(" ", "")):
-                continue
+        for i, line in enumerate(content_lines[:NAME_SEARCH_WINDOW]):
             if looks_like_name(line):
                 name = line
-                name_line_index = i
+                name_index = i
                 break
 
+    # Adres: basindan, ilk IL adi gecen satira kadar (dahil).
+    province_index = None
+    for i, line in enumerate(content_lines):
+        if i == name_index:
+            continue
+        words = [w.strip(".,") for w in line.split()]
+        if any(tr_lower(w) in TR_PROVINCES for w in words):
+            province_index = i
+            break
+
     address_lines = []
-    for i, line in enumerate(lines):
-        low = line.lower()
-        if i == name_line_index:
+    for i, line in enumerate(content_lines):
+        if i == name_index:
             continue
-        if any(k in low for k in NAME_KEYWORDS):
+        if any(k in line.lower() for k in NAME_KEYWORDS):
             continue
-        if "kart sahibi" in low:
+        if "kart sahibi" in line.lower():
             continue
-        if PHONE_RE.fullmatch(line.replace(" ", "")):
-            continue
-        if ID_LINE_RE.match(line.replace(" ", "")):
-            continue
+        if province_index is not None and i > province_index:
+            break  # il satirindan sonrasini adres sayma
         address_lines.append(line)
+        if i == province_index:
+            break
 
     address = "\n".join(address_lines).strip()
     return name, address, phone
