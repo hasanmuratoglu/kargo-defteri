@@ -68,11 +68,15 @@ def looks_like_name(line):
         return False
     if "kart sahibi" in line.lower():
         return False
-    if not NAME_LINE_RE.match(line):
-        return False
     # Isim buyuk harfle baslar (Title Case ya da TAMAMEN BUYUK olabilir).
     if not STARTS_UPPER_RE.match(line):
         return False
+    # Her kelime alfabetik olmali (Unicode-uyumlu: OCR'in bazen yanlis okudugu
+    # aksanli harfleri de - 'Fevrí' gibi - kabul eder, rakam/sembol icermez).
+    for w in words:
+        core = w.strip(".,'’-")
+        if core and not core.isalpha():
+            return False
     # Bilinen bir il/ilce adiyla eslesen kelime iceren satirlar isim degildir.
     if any(tr_lower(w.strip(".,")) in TR_LOCATIONS for w in words):
         return False
@@ -125,13 +129,30 @@ def guess_fields(raw_text):
                 name_index = i + 1
             break
 
-    # 2. yol (yedek): anahtar kelime yoksa, SADECE metnin basindaki birkac
-    # satira bakarak "isim gibi gorunen" ilk satiri sec.
+    # 2. yol (yedek): anahtar kelime yoksa, isim genelde telefon numarasindan
+    # ONCE yazilir (Isim -> Telefon -> Adres siralamasi yaygin). Once telefonun
+    # orijinal metindeki konumunu bul, isim aramasini o noktadan oncesiyle
+    # sinirla; telefon bulunamadiysa metnin en basindaki birkac satira bak.
     if not name:
-        for i, line in enumerate(content_lines[:NAME_SEARCH_WINDOW]):
+        phone_line_index = None
+        if phone:
+            for i, line in enumerate(lines):
+                if extract_phone(line) == phone:
+                    phone_line_index = i
+                    break
+
+        if phone_line_index is not None:
+            search_lines = [l for l in lines[:phone_line_index] if not is_id_line(l)]
+        else:
+            search_lines = content_lines[:NAME_SEARCH_WINDOW]
+
+        for line in search_lines:
             if looks_like_name(line):
                 name = line
-                name_index = i
+                # content_lines icindeki karsilik gelen indeksi bul (adres
+                # olusturma asamasinda bu satiri haric tutabilmek icin).
+                if line in content_lines:
+                    name_index = content_lines.index(line)
                 break
 
     # Adres: basindan, ilk IL adi gecen satira kadar (dahil).
