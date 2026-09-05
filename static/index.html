@@ -203,7 +203,7 @@
       fd.append('photo', file, 'label.jpg');
       const res = await fetch('/api/ocr', { method: 'POST', body: fd });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'OCR hatası');
+      if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
       if (data.phone) fPhone.value = data.phone;
       if (data.raw_text) {
         rawTextBox.style.display = 'block';
