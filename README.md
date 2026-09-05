@@ -1,79 +1,75 @@
 # Kargo Defteri
 
 Dükkan içi kargo takibi için bağımsız web uygulaması. Flask backend + SQLite veritabanı
-+ Google Cloud Vision OCR. Kendi barındırdığın bir yerde çalışır, hiçbir Anthropic/Claude
-hesabına bağlı değildir.
++ EasyOCR (açık kaynak, tamamen ücretsiz ve sınırsız, hiçbir dış API anahtarı gerektirmez).
 
 ## Nasıl çalışır
 
-- Fotoğraf çekilir → backend, Google Cloud Vision API'ye gönderir → etikette geçen tüm
-  yazı okunup ekrana dökülür (telefon numarası otomatik yakalanmaya çalışılır).
+- Fotoğraf çekilir → backend, EasyOCR ile etiketteki yazıyı okur → ham metin ekrana dökülür
+  (telefon numarası otomatik yakalanmaya çalışılır).
 - Bu bir ham metin dökümüdür — "bu isim, bu adres" diye akıllı ayrıştırma yapmaz.
   Okunan metinden ilgili kısmı isim/adres kutularına kopyalarsın.
 - Kayıtlar SQLite veritabanında (`kargo.db`) tutulur, herkes aynı listeyi görür.
 - Liste sayfası her 4 saniyede bir kendini yeniler (gerçek zamanlı değil ama pratikte
   yeterince hızlı).
 
-## 1) Google Cloud Vision API anahtarı alma (ücretsiz kota: ayda 1000 görsel)
+## Google hesabı / API anahtarı gerekmiyor
 
-1. https://console.cloud.google.com adresine git, ücretsiz bir proje oluştur.
-2. Sol menüden **APIs & Services > Library** kısmına gir, "Cloud Vision API" ara ve
-   **Enable** de.
-3. **APIs & Services > Credentials** kısmına gir, **Create Credentials > API key** seç.
-4. Oluşan anahtarı kopyala (bu, aşağıda `GOOGLE_VISION_API_KEY` olarak kullanılacak).
-5. Güvenlik için: bu anahtarı "Cloud Vision API" ile sınırlandırman (API restrictions)
-   önerilir, aksi halde başka biri bulursa senin kotanı kullanabilir.
+Önceki sürüm Google Cloud Vision kullanıyordu (API anahtarı + faturalandırma hesabı
+gerektiriyordu). Artık **EasyOCR** kullanılıyor — açık kaynak, sunucunun kendi üzerinde
+çalışıyor, hiçbir dış servise bağlı değil, hiçbir kota/ücret yok.
 
-Not: Google Cloud Console kredi kartı isteyebilir ama ücretsiz kota içinde kaldığın
-sürece ücretlendirme yapılmaz.
-
-## 2) Yerelde deneme (opsiyonel)
+## 1) Yerelde deneme (opsiyonel)
 
 ```bash
 cd kargo-app
 python3 -m venv venv
 source venv/bin/activate
-pip install -r requirements.txt
-export GOOGLE_VISION_API_KEY="senin-api-anahtarin"
+pip install -r requirements.txt   # ilk kurulum torch indireceği icin biraz uzun surebilir
 python3 app.py
 ```
 
-Tarayıcıda `http://localhost:5000` adresini aç.
+Tarayıcıda `http://localhost:5000` adresini aç. İlk fotoğraf denemesinde EasyOCR modelini
+indirecek (birkaç yüz MB, birkaç dakika sürebilir) — sonraki denemeler hızlı olur.
 
-## 3) Ücretsiz olarak internete yayınlama (Render.com)
+## 2) Ücretsiz olarak internete yayınlama (Render.com)
 
-1. https://render.com adresine git, ücretsiz hesap aç (GitHub hesabınla giriş yapabilirsin).
-2. Bu klasörü bir GitHub reposuna yükle (`git init`, `git add .`, `git commit`, GitHub'a push).
-3. Render panelinde **New > Web Service** seç, GitHub reponu bağla.
-4. Ayarlar:
+1. render.com'da hesap aç, GitHub reponu bağla (daha önce yaptığın gibi).
+2. Ayarlar:
    - **Build Command:** `pip install -r requirements.txt`
-   - **Start Command:** `gunicorn app:app`
-   - **Instance Type:** Free
-5. **Environment > Add Environment Variable** kısmına gir:
-   - Key: `GOOGLE_VISION_API_KEY`
-   - Value: (Google'dan aldığın anahtar)
-6. **Create Web Service** de. Birkaç dakika sonra sana `https://kargo-defteri-xxxx.onrender.com`
-   gibi bir link verecek. Bu linki dükkandaki herkesle paylaş.
+   - **Start Command:** `gunicorn app:app --timeout 120`
+   - **Instance Type:** Free (yetersiz gelirse aşağıya bak)
+3. Artık **Environment Variables** eklemene gerek yok — API anahtarı derdi bitti.
+4. **Create Web Service** de.
 
-### Önemli kısıtlama: ücretsiz planda veri kalıcılığı
+### Önemli: Render'ın ücretsiz planı EasyOCR için yetersiz kalabilir
 
-Render'ın ücretsiz planında disk **kalıcı değildir** — servis yeniden başlatılırsa
-(uzun süre kullanılmadığında uykuya geçip tekrar uyanması dahil) `kargo.db` dosyası
-sıfırlanabilir. Küçük ölçekli/deneme kullanımı için sorun değildir, ama kayıtların
-kalıcı olması senin için kritikse iki seçeneğin var:
+EasyOCR, Google Vision gibi hafif bir API çağrısı değil — arka planda bir yapay zeka
+modelini (torch tabanlı) belleğe yükleyip çalıştırıyor. Render'ın ücretsiz planı sadece
+**512 MB RAM** veriyor, bu EasyOCR için yetersiz kalabilir (servis "out of memory" hatasıyla
+çökebilir ya da hiç açılmayabilir).
 
-- Render'da ücretsiz bir **PostgreSQL** eklentisi ekleyip veritabanını oraya taşımak
-  (biraz kod değişikliği gerekir, istersen bunu da hazırlarım), veya
-- Render'da **Persistent Disk** özelliği olan ücretli bir plana geçmek (aylık birkaç dolar).
+E�er bu olursa seçeneklerin:
+- Render'da biraz daha güçlü, ücretli bir plana geçmek (aylık ~$7, 512 MB yerine daha
+  fazla RAM veren plan).
+- Railway.app gibi başka bir servise geçmek (bazılarının ücretsiz kotası biraz daha
+  cömert olabilir).
+- Dükkanda sürekli açık duran bir bilgisayarda (iş bilgisayarı değil, ayrı bir eski
+  bilgisayar/mini PC) bu uygulamayı yerelde çalıştırıp yerel ağ üzerinden kullanmak —
+  bu durumda RAM sınırı olmaz ve internete hiç çıkmaz.
 
-Alternatif olarak, dükkanda sürekli açık duran bir bilgisayarda (iş bilgisayarı değil,
-ayrı bir eski bilgisayar/mini PC olabilir) bu uygulamayı yerelde 7/24 çalıştırıp yerel
-ağ üzerinden (aynı wifi'daki telefonlar erişebilir) kullanmak da bir seçenek — bu durumda
-veri hep o bilgisayarın diskinde kalır ve internete hiç çıkmaz.
+Deploy'u dene, hata alırsak (Render loglarında "out of memory" ya da servis sürekli
+yeniden başlıyorsa) hangi yöne gideceğimize birlikte karar veririz.
+
+### Veri kalıcılığı notu
+
+Render'ın ücretsiz planında disk kalıcı değildir — servis yeniden başlarsa `kargo.db`
+sıfırlanabilir. Küçük ölçekli kullanım için sorun değildir; kalıcı olması kritikse
+ilerde bir veritabanı eklentisine taşınabilir.
 
 ## Dosyalar
 
-- `app.py` — Flask backend (API + OCR + veritabanı)
+- `app.py` — Flask backend (API + EasyOCR + veritabanı)
 - `static/index.html` — arayüz (fotoğraf çekme, form, liste)
 - `requirements.txt` — Python bağımlılıkları
 - `Procfile` — Render/Heroku için başlatma komutu
