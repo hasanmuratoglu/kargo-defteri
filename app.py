@@ -3,10 +3,14 @@ import re
 import sqlite3
 import base64
 import uuid
-from datetime import datetime, timezone
+import smtplib
+from io import BytesIO
+from email.message import EmailMessage
+from datetime import datetime, timezone, timedelta
 
 import requests
 from flask import Flask, request, jsonify, send_from_directory
+from openpyxl import Workbook
 
 from tr_locations import TR_LOCATIONS, TR_PROVINCES
 
@@ -14,6 +18,10 @@ app = Flask(__name__, static_folder="static", static_url_path="")
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "kargo.db")
 OCR_SPACE_API_KEY = os.environ.get("OCR_SPACE_API_KEY", "").strip()
+GMAIL_ADDRESS = os.environ.get("GMAIL_ADDRESS", "").strip()
+GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD", "").strip()
+REPORT_TO_EMAIL = os.environ.get("REPORT_TO_EMAIL", "").strip() or GMAIL_ADDRESS
+CRON_SECRET = os.environ.get("CRON_SECRET", "").strip()
 
 
 def tr_lower(s):
@@ -334,6 +342,95 @@ def delete_shipment(shipment_id):
     conn.commit()
     conn.close()
     return "", 204
+
+
+def build_excel(records):
+    """Kayitlardan bir .xlsx dosyasi (bytes) uretir."""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Kargolar"
+    headers = ["Tarih", "Alici", "Adres", "Telefon", "Icerik", "Kargo Firmasi", "Giren Kisi", "Kayit Zamani"]
+    ws.append(headers)
+    for r in records:
+        ws.append([
+            r.get("date", ""),
+            r.get("name", ""),
+            r.get("address", ""),
+            r.get("phone", ""),
+            r.get("content", ""),
+            r.get("carrier", ""),
+            r.get("entered_by", ""),
+            r.get("created_at", ""),
+        ])
+    widths = [12, 20, 40, 15, 28, 16, 14, 22]
+    for i, w in enumerate(widths, start=1):
+        ws.column_dimensions[ws.cell(row=1, column=i).column_letter].width = w
+    buf = BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def send_report_email(excel_bytes, record_count, day_str):
+    msg = EmailMessage()
+    msg["Subject"] = f"Kargo Defteri - {day_str} Gunluk Rapor ({record_count} kayit)"
+    msg["From"] = GMAIL_ADDRESS
+    msg["To"] = REPORT_TO_EMAIL
+    msg.set_content(
+        f"{day_str} tarihine ait {record_count} kargo kaydi ektedir.\n\n"
+        "Bu e-posta Kargo Defteri uygulamasi tarafindan otomatik gonderilmistir."
+    )
+    msg.add_attachment(
+        excel_bytes,
+        maintype="application",
+        subtype="vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        filename=f"kargo-defteri-{day_str}.xlsx",
+    )
+    with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=30) as smtp:
+        smtp.login(GMAIL_ADDRESS, GMAIL_APP_PASSWORD)
+        smtp.send_message(msg)
+
+
+@app.route("/api/close-day", methods=["POST"])
+def close_day():
+    """Gunu kapatir: tum kayitlari Excel'e dokup mail atar, sonra veritabanini
+    temizler. Sadece dogru 'secret' (CRON_SECRET) ile cagrilabilir - bu uc
+    nokta veri silen bir islem yaptigi icin herkese acik birakilmamali."""
+    secret = request.args.get("secret", "")
+    if not CRON_SECRET or secret != CRON_SECRET:
+        return jsonify({"error": "Yetkisiz"}), 403
+
+    if not GMAIL_ADDRESS or not GMAIL_APP_PASSWORD:
+        return jsonify({"error": "E-posta ayarlari eksik (GMAIL_ADDRESS / GMAIL_APP_PASSWORD)"}), 500
+
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT date,name,address,phone,content,carrier,entered_by,created_at "
+        "FROM shipments ORDER BY created_at ASC"
+    ).fetchall()
+    records = [dict(r) for r in rows]
+
+    # Sunucu saati UTC oluyor (Render), Turkiye sabit UTC+3 (2016'dan beri
+    # yaz saati uygulamiyor) - tarihi buna gore hesapla.
+    turkey_time = datetime.now(timezone.utc) + timedelta(hours=3)
+    day_str = turkey_time.strftime("%d.%m.%Y")
+
+    if not records:
+        conn.close()
+        return jsonify({"message": "Kayit yok, mail gonderilmedi.", "count": 0})
+
+    try:
+        excel_bytes = build_excel(records)
+        send_report_email(excel_bytes, len(records), day_str)
+    except Exception as e:
+        conn.close()
+        app.logger.error("Gun kapatma - mail gonderilemedi: %s", e)
+        return jsonify({"error": f"Mail gonderilemedi, kayitlar SILINMEDI: {e}"}), 502
+
+    conn.execute("DELETE FROM shipments")
+    conn.commit()
+    conn.close()
+
+    return jsonify({"message": "Gun kapatildi, mail gonderildi, kayitlar silindi.", "count": len(records)})
 
 
 @app.route("/api/verify-address", methods=["POST"])
