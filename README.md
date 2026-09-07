@@ -74,6 +74,46 @@ ilerde bir veritabanı eklentisine taşınabilir.
 - `requirements.txt` — Python bağımlılıkları
 - `Procfile` — Render/Heroku için başlatma komutu
 
+## Kalıcı veritabanı (Supabase)
+
+**Önemli:** İlk sürümde kayıtlar SQLite ile Render sunucusunun kendi diskinde
+tutuluyordu. Ama Render'ın ücretsiz planı 15 dakika hareketsizlikte servisi
+uykuya yatırıp tekrar uyandırıyor, ve her uyanışta disk sıfırlanıyor — yani
+kayıtlar gün içinde birden fazla kez kayboluyordu. Bunu çözmek için veritabanı
+**Supabase**'e (ücretsiz, kalıcı, kart istemeyen bir PostgreSQL servisi)
+taşındı.
+
+### 1) Supabase'de ücretsiz proje oluştur
+
+1. https://supabase.com adresine git, ücretsiz hesap aç (kart istemiyor).
+2. **"New Project"** de, bir isim ver (örn. "kargo-defteri"), bir veritabanı
+   şifresi belirle (bunu bir yere not et), bölge olarak Avrupa'ya yakın bir
+   yer seç (örn. Frankfurt/EU Central).
+3. Proje oluşunca (birkaç dakika sürebilir), sol menüden **"Project Settings"
+   > "Database"** kısmına gir.
+4. **"Connection string"** bölümünde **"URI"** sekmesini seç, gösterilen
+   bağlantı adresini kopyala — `postgresql://postgres:[YOUR-PASSWORD]@...`
+   şeklinde bir şey olacak. `[YOUR-PASSWORD]` kısmını 2. adımda belirlediğin
+   şifreyle değiştir.
+
+### 2) Render'a `DATABASE_URL` ekle
+
+Render Dashboard > servisin > Environment Variables kısmına ekle:
+
+| Key | Value |
+|---|---|
+| `DATABASE_URL` | (Supabase'den kopyaladığın, şifreyi yerine koyduğun bağlantı adresi) |
+
+Kaydedince Render otomatik yeniden başlayacak. Uygulama açılışta tabloyu
+kendisi oluşturuyor, ekstra bir şey yapmana gerek yok.
+
+### Not: 7 gün kullanılmazsa proje duraklıyor
+
+Supabase'in ücretsiz planı, proje 7 gün hiç veritabanı isteği almazsa otomatik
+duraklatıyor. Dükkan her gün kullanıldığı için bu sorun olmaz; uzun bir tatil
+sonrası siteye girip "500 hatası" gibi bir şey görürsen, Supabase panelinden
+projeyi tek tıkla uyandırman yeterli.
+
 ## Günü kapatma (otomatik Excel + mail + temizlik)
 
 Her gece belirlenen saatte tüm kayıtları bir Excel dosyasına dökup mail atan,
