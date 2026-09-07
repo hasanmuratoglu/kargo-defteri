@@ -1,12 +1,13 @@
 import os
 import re
-import sqlite3
 import base64
 import uuid
 from io import BytesIO
 from datetime import datetime, timezone, timedelta
 
 import requests
+import psycopg2
+import psycopg2.extras
 from flask import Flask, request, jsonify, send_from_directory
 from openpyxl import Workbook
 
@@ -14,7 +15,7 @@ from tr_locations import TR_LOCATIONS, TR_PROVINCES
 
 app = Flask(__name__, static_folder="static", static_url_path="")
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "kargo.db")
+DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
 OCR_SPACE_API_KEY = os.environ.get("OCR_SPACE_API_KEY", "").strip()
 RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "").strip()
 RESEND_FROM_EMAIL = os.environ.get("RESEND_FROM_EMAIL", "onboarding@resend.dev").strip()
@@ -190,14 +191,16 @@ def guess_fields(raw_text):
 
 
 def get_db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
+    conn = psycopg2.connect(DATABASE_URL, cursor_factory=psycopg2.extras.RealDictCursor)
     return conn
 
 
 def init_db():
+    if not DATABASE_URL:
+        return
     conn = get_db()
-    conn.execute(
+    cur = conn.cursor()
+    cur.execute(
         """
         CREATE TABLE IF NOT EXISTS shipments (
             id TEXT PRIMARY KEY,
@@ -214,6 +217,7 @@ def init_db():
         """
     )
     conn.commit()
+    cur.close()
     conn.close()
 
 
@@ -285,10 +289,13 @@ def ocr():
 @app.route("/api/shipments", methods=["GET"])
 def list_shipments():
     conn = get_db()
-    rows = conn.execute(
+    cur = conn.cursor()
+    cur.execute(
         "SELECT id,name,address,phone,content,carrier,date,entered_by,photo,created_at "
         "FROM shipments ORDER BY created_at DESC LIMIT 300"
-    ).fetchall()
+    )
+    rows = cur.fetchall()
+    cur.close()
     conn.close()
     return jsonify([dict(r) for r in rows])
 
@@ -319,9 +326,10 @@ def create_shipment():
         return jsonify({"error": "Kargo icerigi ve kargo firmasi zorunlu"}), 400
 
     conn = get_db()
-    conn.execute(
+    cur = conn.cursor()
+    cur.execute(
         "INSERT INTO shipments (id,name,address,phone,content,carrier,date,entered_by,photo,created_at) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?)",
+        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
         (
             record["id"], record["name"], record["address"], record["phone"],
             record["content"], record["carrier"], record["date"], record["entered_by"],
@@ -329,6 +337,7 @@ def create_shipment():
         ),
     )
     conn.commit()
+    cur.close()
     conn.close()
     return jsonify(record), 201
 
@@ -336,8 +345,10 @@ def create_shipment():
 @app.route("/api/shipments/<shipment_id>", methods=["DELETE"])
 def delete_shipment(shipment_id):
     conn = get_db()
-    conn.execute("DELETE FROM shipments WHERE id=?", (shipment_id,))
+    cur = conn.cursor()
+    cur.execute("DELETE FROM shipments WHERE id=%s", (shipment_id,))
     conn.commit()
+    cur.close()
     conn.close()
     return "", 204
 
@@ -412,10 +423,12 @@ def close_day():
         return jsonify({"error": "E-posta ayarlari eksik (RESEND_API_KEY / REPORT_TO_EMAIL)"}), 500
 
     conn = get_db()
-    rows = conn.execute(
+    cur = conn.cursor()
+    cur.execute(
         "SELECT date,name,address,phone,content,carrier,entered_by,created_at "
         "FROM shipments ORDER BY created_at ASC"
-    ).fetchall()
+    )
+    rows = cur.fetchall()
     records = [dict(r) for r in rows]
 
     # Sunucu saati UTC oluyor (Render), Turkiye sabit UTC+3 (2016'dan beri
@@ -424,6 +437,7 @@ def close_day():
     day_str = turkey_time.strftime("%d.%m.%Y")
 
     if not records:
+        cur.close()
         conn.close()
         return jsonify({"message": "Kayit yok, mail gonderilmedi.", "count": 0})
 
@@ -431,12 +445,14 @@ def close_day():
         excel_bytes = build_excel(records)
         send_report_email(excel_bytes, len(records), day_str)
     except Exception as e:
+        cur.close()
         conn.close()
         app.logger.error("Gun kapatma - mail gonderilemedi: %s", e)
         return jsonify({"error": f"Mail gonderilemedi, kayitlar SILINMEDI: {e}"}), 502
 
-    conn.execute("DELETE FROM shipments")
+    cur.execute("DELETE FROM shipments")
     conn.commit()
+    cur.close()
     conn.close()
 
     return jsonify({"message": "Gun kapatildi, mail gonderildi, kayitlar silindi.", "count": len(records)})
