@@ -6,8 +6,8 @@ from io import BytesIO
 from datetime import datetime, timezone, timedelta
 
 import requests
-import psycopg2
-import psycopg2.extras
+import psycopg
+from psycopg.rows import dict_row
 from flask import Flask, request, jsonify, send_from_directory
 from openpyxl import Workbook
 
@@ -191,7 +191,7 @@ def guess_fields(raw_text):
 
 
 def get_db():
-    conn = psycopg2.connect(DATABASE_URL, cursor_factory=psycopg2.extras.RealDictCursor)
+    conn = psycopg.connect(DATABASE_URL, row_factory=dict_row)
     return conn
 
 
